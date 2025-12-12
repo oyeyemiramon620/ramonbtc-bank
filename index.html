@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OnlineFlash Dashboard - Money Rain</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body {
+  font-family: Arial, system-ui;
+  background: linear-gradient(120deg,#0f1724,#0b1220);
+  color: #e6eef6;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+  overflow-x: hidden;
+  position: relative;
+}
+.container {
+  width: 480px;
+  background: #0b1220;
+  padding: 20px;
+  border-radius: 16px;
+  box-shadow: 0 15px 40px rgba(0,0,0,0.7);
+  position: relative;
+  overflow: hidden;
+}
+h2 { margin: 0 0 12px 0; }
+input {
+  width: 100%; padding:10px; margin:8px 0;
+  border-radius:8px; border:1px solid #233;
+  background:#07101a; color:#e6eef6;
+}
+button {
+  padding: 10px; border-radius: 8px; border:none;
+  cursor:pointer; background: linear-gradient(90deg,#06b6d4,#f59e0b);
+  font-weight:700; margin-top:8px; transition: all 0.2s ease;
+}
+button:hover { transform: scale(1.05); box-shadow:0 0 20px #06b6d4,0 0 25px #f59e0b; }
+#info { font-weight:bold; color:#06b6d4; text-align:center; animation:glow 1.5s infinite alternate; margin-bottom:12px;}
+.product { border:1px solid #233; padding:6px; border-radius:6px; margin-bottom:6px; transition: transform 0.2s; }
+.product:hover { transform: translateX(5px); box-shadow:0 0 8px #06b6d4; }
+.tx-item { padding:4px; border-bottom:1px solid #233; animation:slideIn 0.5s ease; }
+.tx-item.new { background: rgba(255,255,255,0.08); animation: flash 1s infinite alternate; }
+.money-icon, .money-rain { position:absolute; font-size:24px; pointer-events:none; z-index:1000; transition: transform 1s, opacity 1s; }
+@keyframes glow { 0%{text-shadow:0 0 5px #06b6d4;}100%{text-shadow:0 0 15px #f59e0b;} }
+@keyframes slideIn { from{opacity:0;transform:translateX(-10px);}to{opacity:1;transform:translateX(0);} }
+@keyframes flash { from{background:rgba(255,255,255,0.05);} to{background:rgba(255,255,255,0.2);} }
+@keyframes fall { 0% {transform: translateY(-50px) rotate(0deg);} 100% {transform: translateY(500px) rotate(360deg);} }
+</style>
+</head>
+<body>
+<div class="container" id="app">
+
+  <!-- AUTH -->
+  <div id="auth">
+    <h2>OnlineFlash Login</h2>
+    <input id="email" placeholder="Email">
+    <input id="password" placeholder="Password" type="password">
+    <div style="display:flex; gap:8px;">
+      <button id="signupBtn">Sign Up</button>
+      <button id="loginBtn">Log In</button>
+    </div>
+    <p class="small">Sign up or log in to access your dashboard.</p>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="dash" style="display:none">
+    <h2>Dashboard</h2>
+    <div id="info">Balance: $0.00</div>
+    <hr>
+    <h3>Send Money</h3>
+    <input id="toEmail" placeholder="Recipient Email">
+    <input id="amt" placeholder="Amount">
+    <button id="sendBtn">Send Money</button>
+    <hr>
+    <h3>Transaction History</h3>
+    <div id="tx" style="max-height:150px; overflow-y:auto;"></div>
+    <hr>
+    <h3>Money Flow Chart</h3>
+    <canvas id="moneyChart" height="200"></canvas>
+    <button id="logout" style="margin-top:12px;">Log Out</button>
+  </div>
+</div>
+
+<script>
+const API=""; // backend URL
+let token=null;
+let balance=0;
+let chart=null;
+let chartData={labels:[],data:[]};
+
+async function post(path, body, withAuth=true){
+  const headers={'Content-Type':'application/json'};
+  if(withAuth && token) headers['Authorization']='Bearer '+token;
+  const r=await fetch(API+path,{method:'POST',headers,body:JSON.stringify(body)});
+  return r.json();
+}
+
+// AUTH
+document.getElementById('signupBtn').onclick=async ()=>{
+  const email=document.getElementById('email').value.trim();
+  const password=document.getElementById('password').value.trim();
+  const data=await post('/api/signup',{email,password},false);
+  if(data.token){ token=data.token; showDash(); }else alert(JSON.stringify(data));
+};
+document.getElementById('loginBtn').onclick=async ()=>{
+  const email=document.getElementById('email').value.trim();
+  const password=document.getElementById('password').value.trim();
+  const data=await post('/api/login',{email,password},false);
+  if(data.token){ token=data.token; showDash(); }else alert(JSON.stringify(data));
+};
+
+// DASHBOARD
+async function showDash(){
+  document.getElementById('auth').style.display='none';
+  document.getElementById('dash').style.display='block';
+  const me=await fetch(API+'/api/me',{headers:{Authorization:'Bearer '+token}}).then(r=>r.json());
+  balance=me.user.balance||0;
+  updateBalance(0,balance);
+
+  const txDiv=document.getElementById('tx');
+  txDiv.innerHTML='';
+  chartData.labels=[];
+  chartData.data=[];
+  (me.transactions||[]).forEach(t=>{
+    txDiv.innerHTML+=`<div class="tx-item">${t.created_at} — ${(t.amount/100).toFixed(2)} — ${t.status}</div>`;
+    chartData.labels.push(t.created_at);
+    chartData.data.push(t.amount/100);
+  });
+  renderChart();
+}
+
+// Animate balance
+function updateBalance(from,to){
+  const info=document.getElementById('info');
+  let current=from;
+  const step=(to-from)/50;
+  const interval=setInterval(()=>{
+    current+=step;
+    info.innerHTML=`Balance: $${current.toFixed(2)}`;
+    if((step>0&&current>=to)||(step<0&&current<=to)){ clearInterval(interval); info.innerHTML=`Balance: $${to.toFixed(2)}`; }
+  },20);
+}
+
+// Chart
+function renderChart(){
+  const ctx=document.getElementById('moneyChart').getContext('2d');
+  if(chart) chart.destroy();
+  chart=new Chart(ctx,{type:'line',data:{labels:chartData.labels,datasets:[{label:'Money Flow',data:chartData.data,borderColor:'#06b6d4',backgroundColor:'rgba(6,182,212,0.2)',tension:0.4}]},options:{responsive:true,plugins:{legend:{display:true}}}});
+}
+
+// Money Rain Effect
+function moneyRain(count=20){
+  for(let i=0;i<count;i++){
+    const icon=document.createElement('div');
+    icon.className='money-rain';
+    icon.innerText=['💸','💰','🪙'][Math.floor(Math.random()*3)];
+    icon.style.left=Math.random()*window.innerWidth+'px';
+    icon.style.top='-50px';
+    icon.style.fontSize=12+Math.random()*18+'px';
+    icon.style.opacity=Math.random();
+    document.body.appendChild(icon);
+    const duration=3000+Math.random()*2000;
+    icon.style.transition=`transform ${duration}ms linear, opacity ${duration}ms linear`;
+    setTimeout(()=>{
+      icon.style.transform=`translateY(${window.innerHeight+50}px) rotate(${Math.random()*720}deg)`;
+      icon.style.opacity=0;
+    },50);
+    setTimeout(()=>icon.remove(),duration+100);
+  }
+}
+
+// Send Money
+document.getElementById('sendBtn').onclick=async ()=>{
+  const to=document.getElementById('toEmail').value.trim();
+  const amt=Number(document.getElementById('amt').value);
+  if(!to||!amt) return alert("Enter recipient and amount");
+
+  // Flying icons
+  const iconsCount=Math.min(Math.floor(amt/1000),10);
+  for(let i=0;i<iconsCount;i++){
+    const icon=document.createElement('div');
+    icon.className='money-icon';
+    icon.innerText='💸';
+    document.body.appendChild(icon);
+    const infoRect=document.getElementById('info').getBoundingClientRect();
+    const txRect=document.getElementById('tx').getBoundingClientRect();
+    icon.style.left=infoRect.left+infoRect.width/2+'px';
+    icon.style.top=infoRect.top+'px';
+    setTimeout(()=>{
+      icon.style.transform=`translate(${txRect.left-infoRect.left}px,${txRect.top-infoRect.top+Math.random()*30}px) scale(${1+Math.random()}) rotate(${Math.random()*360}deg)`;
+      icon.style.opacity=0;
+    },i*100);
+    setTimeout(()=>icon.remove(),1500);
+  }
+
+  const r=await post('/api/pay/init',{amount:amt,email:to});
+  if(r.authorization_url){
+    window.open(r.authorization_url,'_blank');
+    updateBalance(balance,balance+amt/100);
+    balance+=amt/100;
+
+    const now=new Date().toLocaleTimeString();
+    chartData.labels.push(now);
+    chartData.data.push(amt/100);
+    document.getElementById('tx').innerHTML=`<div class="tx-item new">${now} — ${(amt/100).toFixed(2)} — pending</div>`+document.getElementById('tx').innerHTML;
+    renderChart();
+
+    if(amt>=1000) moneyRain(Math.min(Math.floor(amt/500),50)); // big payments trigger money rain
+    alert("Payment started. Confirmation email will be sent.");
+  }else alert(JSON.stringify(r));
+};
+
+// Logout
+document.getElementById('logout').onclick=()=>{
+  token=null; document.getElementById('auth').style.display='block'; document.getElementById('dash').style.display='none';
+};
+</script>
+</body>
+</html>
